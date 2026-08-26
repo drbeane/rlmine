@@ -71,6 +71,7 @@ class Study:
         self.verbose = verbose
         self._rng = np.random.default_rng(seed)
         self._trial_wants_context = _accepts_two_args(trial)
+        self._noted_no_positive = False
 
     def __repr__(self):
         return (
@@ -289,10 +290,9 @@ class Study:
         if positive_only:
             positive = history[history["score"] > 0]
             if positive.empty:
-                warnings.warn(
-                    "No runs with a positive score yet; selecting from all runs.",
-                    stacklevel=3,
-                )
+                if self.verbose and not self._noted_no_positive:
+                    print("No runs with a positive score yet; selecting from all runs.")
+                    self._noted_no_positive = True
             else:
                 pool = positive
 

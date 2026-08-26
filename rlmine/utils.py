@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import random
 import sys
+import warnings
 from datetime import datetime
 from math import floor, log10
 
@@ -76,11 +77,28 @@ def now_iso():
     return datetime.now().isoformat(timespec="seconds")
 
 
+def _quiet_jupyter_utcnow():
+    """jupyter_client still calls ``datetime.utcnow()``, which Python 3.12+
+    deprecates. IPython shows that warning on every ``display()``, which
+    drowns the trial output. Filter only that deprecation."""
+    warnings.filterwarnings(
+        "ignore",
+        message=r".*utcnow\(\) is deprecated",
+        category=DeprecationWarning,
+    )
+    warnings.filterwarnings(
+        "ignore",
+        category=DeprecationWarning,
+        module=r"jupyter_client(\.|$)",
+    )
+
+
 def display_obj(obj):
     """Render in a notebook when possible, fall back to print elsewhere."""
     try:
         from IPython.display import display
 
+        _quiet_jupyter_utcnow()
         display(obj)
     except Exception:
         print(obj)
@@ -90,6 +108,7 @@ def display_header(text, level=3):
     try:
         from IPython.display import HTML, display
 
+        _quiet_jupyter_utcnow()
         display(HTML(f"<h{level}>{text}</h{level}>"))
     except Exception:
         print(f"\n=== {text} ===")
