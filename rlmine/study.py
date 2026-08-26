@@ -13,7 +13,15 @@ import pandas as pd
 from .scoring import resolve_score_fn
 from .space import Space
 from .stores import resolve_store
-from .utils import display_header, display_obj, env_info, new_run_id, now_iso, today
+from .utils import (
+    _quiet_third_party_warnings,
+    display_header,
+    display_obj,
+    env_info,
+    new_run_id,
+    now_iso,
+    today,
+)
 
 __all__ = ["Study"]
 
@@ -72,6 +80,7 @@ class Study:
         self._rng = np.random.default_rng(seed)
         self._trial_wants_context = _accepts_two_args(trial)
         self._noted_no_positive = False
+        _quiet_third_party_warnings()
 
     def __repr__(self):
         return (
@@ -169,6 +178,7 @@ class Study:
     # -----------------------------------------------------------------
 
     def _execute(self, params, origin, parent_id=None, parent_score=None):
+        _quiet_third_party_warnings()
         run_id = new_run_id()
 
         if self.verbose:

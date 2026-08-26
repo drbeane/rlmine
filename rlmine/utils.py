@@ -77,19 +77,38 @@ def now_iso():
     return datetime.now().isoformat(timespec="seconds")
 
 
-def _quiet_jupyter_utcnow():
-    """jupyter_client still calls ``datetime.utcnow()``, which Python 3.12+
-    deprecates. IPython shows that warning on every ``display()``, which
-    drowns the trial output. Filter only that deprecation."""
+def _quiet_third_party_warnings():
+    """Silence known-noisy deprecations from libraries we do not control.
+
+    jupyter_client still calls ``datetime.utcnow()``, Box2D's SWIG bindings
+    omit ``__module__``, ipywidgets still reads ``Kernel._parent_header``,
+    and Colab's InteractiveSheet still calls gspread with the old argument
+    order. IPython prints all of these on every trial.
+    """
     warnings.filterwarnings(
         "ignore",
-        message=r".*utcnow\(\) is deprecated",
+        message=r"(?s).*utcnow\(\) is deprecated",
         category=DeprecationWarning,
     )
     warnings.filterwarnings(
         "ignore",
         category=DeprecationWarning,
         module=r"jupyter_client(\.|$)",
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"builtin type (SwigPyPacked|SwigPyObject|swigvarlink) has no __module__ attribute",
+        category=DeprecationWarning,
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"(?s).*_parent_header is deprecated",
+        category=DeprecationWarning,
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"(?s).*order of arguments in worksheet\.update\(\) has changed",
+        category=DeprecationWarning,
     )
 
 
@@ -98,7 +117,7 @@ def display_obj(obj):
     try:
         from IPython.display import display
 
-        _quiet_jupyter_utcnow()
+        _quiet_third_party_warnings()
         display(obj)
     except Exception:
         print(obj)
@@ -108,7 +127,7 @@ def display_header(text, level=3):
     try:
         from IPython.display import HTML, display
 
-        _quiet_jupyter_utcnow()
+        _quiet_third_party_warnings()
         display(HTML(f"<h{level}>{text}</h{level}>"))
     except Exception:
         print(f"\n=== {text} ===")

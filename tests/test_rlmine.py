@@ -1,12 +1,14 @@
 """Tests for the mining engine, using a cheap synthetic trial function."""
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from rlmine import JSONLStore, MemoryStore, Space, Study
+from rlmine import JSONLStore, MemoryStore, SheetMirror, Space, Study
 from rlmine import params as P
-from rlmine.trials.sb3 import route_params
+from rlmine.trials.sb3 import prefer_cpu_device, route_params
 
 
 def quadratic_trial(params):
@@ -526,6 +528,47 @@ def test_routing_does_not_mutate_the_caller_dict():
     assert params == {"timesteps": 1000, "net_arch": [64, 64]}
 
 
+class _A2C:
+    pass
+
+
+class _DQN:
+    pass
+
+
+_A2C.__name__ = "A2C"
+_DQN.__name__ = "DQN"
+
+
+def test_a2c_mlp_defaults_to_cpu():
+    kwargs = prefer_cpu_device(_A2C, "MlpPolicy", {})
+    assert kwargs["device"] == "cpu"
+
+
+def test_ppo_mlp_defaults_to_cpu():
+    class _PPO:
+        pass
+
+    _PPO.__name__ = "PPO"
+    kwargs = prefer_cpu_device(_PPO, "MlpPolicy", {})
+    assert kwargs["device"] == "cpu"
+
+
+def test_dqn_does_not_force_cpu():
+    kwargs = prefer_cpu_device(_DQN, "MlpPolicy", {})
+    assert "device" not in kwargs
+
+
+def test_explicit_device_is_respected():
+    kwargs = prefer_cpu_device(_A2C, "MlpPolicy", {"device": "cuda"})
+    assert kwargs["device"] == "cuda"
+
+
+def test_cnn_policy_does_not_force_cpu():
+    kwargs = prefer_cpu_device(_A2C, "CnnPolicy", {})
+    assert "device" not in kwargs
+
+
 def test_memory_store_supports_dry_runs():
     study = Study(
         name="memory",
@@ -537,3 +580,78 @@ def test_memory_store_supports_dry_runs():
     )
     study.run(n=2)
     assert len(study.history()) == 2
+
+
+def test_swig_and_utcnow_deprecations_are_filtered():
+    from rlmine.utils import _quiet_third_party_warnings
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        _quiet_third_party_warnings()
+        warnings.warn(
+            "builtin type SwigPyPacked has no __module__ attribute",
+            DeprecationWarning,
+        )
+        warnings.warn(
+            "builtin type SwigPyObject has no __module__ attribute",
+            DeprecationWarning,
+        )
+        warnings.warn(
+            "builtin type swigvarlink has no __module__ attribute",
+            DeprecationWarning,
+        )
+        warnings.warn(
+            "datetime.datetime.utcnow() is deprecated and scheduled for removal "
+            "in a future version. Use timezone-aware objects to represent "
+            "datetimes in UTC: datetime.datetime.now(datetime.UTC).",
+            DeprecationWarning,
+        )
+        warnings.warn(
+            "\nKernel._parent_header is deprecated in ipykernel 6. Use .get_parent()",
+            DeprecationWarning,
+        )
+        warnings.warn(
+            "The order of arguments in worksheet.update() has changed. Please "
+            "pass values first and range_name secondor used named arguments "
+            "(range_name=, values=)",
+            DeprecationWarning,
+        )
+        noise = [
+            str(w.message)
+            for w in recorded
+            if "SwigPy" in str(w.message)
+            or "swigvarlink" in str(w.message)
+            or "utcnow" in str(w.message)
+            or "_parent_header" in str(w.message)
+            or "worksheet.update" in str(w.message)
+        ]
+        assert noise == []
+
+
+class _FakeWorksheet:
+    def __init__(self):
+        self.cleared = False
+        self.updated = None
+
+    def clear(self):
+        self.cleared = True
+
+    def update(self, **kwargs):
+        self.updated = kwargs
+
+
+class _FakeSheet:
+    def __init__(self):
+        self.worksheet = _FakeWorksheet()
+
+
+def test_sheet_mirror_writes_with_named_gspread_arguments():
+    mirror = SheetMirror("https://example.invalid")
+    frame = pd.DataFrame([{"score": 1.5, "net_arch": [64, 64], "empty": np.nan}])
+    sheet = _FakeSheet()
+    mirror._push(sheet, frame)
+    assert sheet.worksheet.cleared
+    assert sheet.worksheet.updated["range_name"] == "A1"
+    header, row = sheet.worksheet.updated["values"]
+    assert header == ["score", "net_arch", "empty"]
+    assert row == [1.5, "[64, 64]", ""]

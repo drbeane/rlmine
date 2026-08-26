@@ -27,6 +27,9 @@ from .scoring import mean_minus_std, mean_return, success_rate
 from .space import Space
 from .stores import CSVStore, JSONLStore, MemoryStore, SheetMirror
 from .study import Study
+from .utils import _quiet_third_party_warnings
+
+_quiet_third_party_warnings()
 
 __version__ = "0.1.0"
 

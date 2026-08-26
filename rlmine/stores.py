@@ -13,7 +13,9 @@ are warnings, never errors: losing the view must not lose the results.
 
 from __future__ import annotations
 
+import contextlib
 import csv
+import io
 import json
 import os
 import warnings
@@ -180,7 +182,10 @@ class SheetMirror(Store):
             kwargs = {"url": self.url, "backend": "pandas", "display": False}
             if self.worksheet_id is not None:
                 kwargs["worksheet_id"] = str(self.worksheet_id)
-            self._handle = sheets.InteractiveSheet(**kwargs)
+            # InteractiveSheet always prints the spreadsheet URL on
+            # construction, even with display=False.
+            with contextlib.redirect_stdout(io.StringIO()):
+                self._handle = sheets.InteractiveSheet(**kwargs)
         return self._handle
 
     @staticmethod
@@ -189,7 +194,25 @@ class SheetMirror(Store):
             return json.dumps(value)
         if value is None:
             return ""
+        try:
+            if pd.isna(value):
+                return ""
+        except (TypeError, ValueError):
+            pass
         return value
+
+    def _push(self, sheet, frame):
+        """Write ``frame`` through gspread with named arguments.
+
+        Colab's ``InteractiveSheet.update`` still calls
+        ``worksheet.update(location, data)``, which gspread 6 warns about on
+        every append. Named arguments work on both gspread 5 and 6.
+        """
+        values = [list(frame.columns)]
+        for _, row in frame.iterrows():
+            values.append([self._to_cell(v) for v in row.tolist()])
+        sheet.worksheet.clear()
+        sheet.worksheet.update(range_name="A1", values=values)
 
     def append(self, record):
         try:
@@ -202,7 +225,7 @@ class SheetMirror(Store):
             frame.loc[position] = None
             for column, value in record.items():
                 frame.loc[position, column] = self._to_cell(value)
-            sheet.update(frame)
+            self._push(sheet, frame)
         except Exception as exc:
             warnings.warn(f"Sheet mirror failed ({exc}); results are still saved.", stacklevel=2)
 

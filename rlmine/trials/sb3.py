@@ -71,6 +71,21 @@ def route_params(params, policy_kwargs=None, model_kwargs=None, default_timestep
     return timesteps, constructor_kwargs
 
 
+def prefer_cpu_device(algo, policy, constructor_kwargs):
+    """Default A2C/PPO + MLP to CPU.
+
+    Stable-Baselines3 warns that on-policy MLP policies train more slowly on
+    GPU than on CPU. Honour an explicit ``device`` if the caller already set
+    one, and leave CNN policies on the default device so they can use the GPU.
+    """
+    if "device" in constructor_kwargs:
+        return constructor_kwargs
+    name = getattr(algo, "__name__", "")
+    if name in {"A2C", "PPO"} and "Cnn" not in str(policy):
+        constructor_kwargs["device"] = "cpu"
+    return constructor_kwargs
+
+
 def sb3_trial(
     algo,
     env_id,
@@ -110,7 +125,9 @@ def sb3_trial(
         save_best_to: Optional directory to keep each run's best checkpoint,
             named by run id.
         model_kwargs: Fixed constructor arguments that are not part of the
-            search space.
+            search space. A2C and PPO with an MLP policy default to
+            ``device='cpu'`` (faster than GPU for these algorithms); pass
+            ``device`` here to override.
     """
     env_kwargs = dict(env_kwargs or {})
     norm_kwargs = dict(norm_kwargs or {"norm_obs": True, "norm_reward": False, "clip_obs": 10.0})
@@ -118,6 +135,10 @@ def sb3_trial(
     base_model_kwargs = dict(model_kwargs or {})
 
     def trial(params, context=None):
+        from ..utils import _quiet_third_party_warnings
+
+        _quiet_third_party_warnings()
+
         import gymnasium
         from rltools.utils import SB3Agent, evaluate
         from stable_baselines3.common.callbacks import EvalCallback
@@ -127,6 +148,7 @@ def sb3_trial(
         timesteps, constructor_kwargs = route_params(
             params, base_policy_kwargs, base_model_kwargs, default_timesteps
         )
+        prefer_cpu_device(algo, policy, constructor_kwargs)
 
         train_env = make_vec_env(env_id, n_envs=n_envs, seed=env_seed, env_kwargs=env_kwargs)
         eval_env = make_vec_env(env_id, n_envs=n_envs, seed=env_seed, env_kwargs=env_kwargs)
