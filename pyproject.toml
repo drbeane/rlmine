@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rlmine"
+version = "0.1.0"
+description = "Hyperparameter mining for reinforcement learning labs: perturb, roulette-select, and recheck for drift."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Robbie Beane" }]
+keywords = ["reinforcement-learning", "hyperparameter-search", "stable-baselines3", "colab"]
+
+dependencies = [
+    "numpy>=1.21",
+    "pandas>=1.3",
+]
+
+[project.optional-dependencies]
+sb3 = ["stable-baselines3>=2.0", "gymnasium>=0.29"]
+dev = ["pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/drbeane/rlmine"
+
+[tool.setuptools.packages.find]
+include = ["rlmine*"]
