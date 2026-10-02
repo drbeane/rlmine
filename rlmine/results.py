@@ -297,7 +297,8 @@ class Results:
         Configs that differ only in ``runtime`` are one setup. Setups are
         ranked by the best latest score among their runtimes. Each row shows
         ``score`` (the best latest score among the runtimes) and ``timesteps``,
-        then for each runtime the latest score, the date of that run, and the config id.
+        then for each runtime the latest score, the date of that run, its
+        ``minutes``, and the config id.
         A runtime that was never checked is blank.
         """
         groups = {}
@@ -317,6 +318,7 @@ class Results:
                     "id": format_config_id(pid),
                     "score": _number(latest.get("score")),
                     "date": latest.get("date"),
+                    "minutes": _number(latest.get("minutes")),
                     "stamp": stamp,
                 }
         if not groups:
@@ -324,7 +326,7 @@ class Results:
 
         names = sorted({name for g in groups.values() for name in g["runtimes"]})
         columns = ["score", "timesteps"] + [
-            f"{name}_{part}" for name in names for part in ("score", "date", "id")
+            f"{name}_{part}" for name in names for part in ("score", "date", "minutes", "id")
         ]
         ranked = []
         for group in groups.values():
@@ -336,6 +338,7 @@ class Results:
                 row[f"{name}_id"] = found.get("id")
                 row[f"{name}_score"] = found.get("score")
                 row[f"{name}_date"] = found.get("date")
+                row[f"{name}_minutes"] = found.get("minutes")
             ranked.append((float("-inf") if best is None else best, row))
         ranked.sort(key=lambda item: item[0], reverse=True)
         rows = [row for _, row in ranked[: int(k)]]

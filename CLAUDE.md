@@ -40,7 +40,7 @@ Colab runtimes are ephemeral. Persist to Drive or a sheet; the default local `re
 
 For a config, the latest run is its result. Older runs are kept for posterity and for comparison, but they can no longer be reproduced, so they are not important. Rank, compare, and report on the latest run. Never average a config's scores: the mean over its runs is meaningless. Result views show the latest score and its date, not run counts or package versions.
 
-`Results.runtimes(k)` compares the top setups. Configs that differ only in `runtime` form one setup, ranked by the best latest score among its runtimes. Each row shows the overall `score`, `timesteps`, and, per runtime checked, the config id, its latest score, and the date of that run. Nothing else.
+`Results.runtimes(k)` compares the top setups. Configs that differ only in `runtime` form one setup, ranked by the best latest score among its runtimes. Each row shows the overall `score`, `timesteps`, and, per runtime checked, the config id, its latest score, the date of that run, and its minutes. Nothing else.
 
 ### Buckets
 
