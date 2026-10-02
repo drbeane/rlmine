@@ -296,8 +296,9 @@ class Results:
 
         Configs that differ only in ``runtime`` are one setup. Setups are
         ranked by the best latest score among their runtimes. Each row shows
-        ``score`` (the best latest score among the runtimes) and ``timesteps``,
-        then for each runtime the latest score, the date of that run, its
+        ``score`` (the best latest score among the runtimes), ``timesteps``, and
+        the same settings ``best`` shows (shaded the same way when a reference
+        ``config`` is given), then for each runtime the latest score, the date of that run, its
         ``minutes``, and the config id.
         A runtime that was never checked is blank.
         """
@@ -325,14 +326,18 @@ class Results:
             return pd.DataFrame()
 
         names = sorted({name for g in groups.values() for name in g["runtimes"]})
-        columns = ["score", "timesteps"] + [
+        fields = [c for c in self._param_fields("varying") if c not in ("runtime", "timesteps")]
+        columns = ["score", "timesteps"] + fields + [
             f"{name}_{part}" for name in names for part in ("score", "date", "minutes", "id")
         ]
         ranked = []
         for group in groups.values():
             scores = [r["score"] for r in group["runtimes"].values() if r["score"] is not None]
             best = max(scores) if scores else None
-            row = {"score": best, "timesteps": _flatten_config(group["config"]).get("timesteps")}
+            flat = _flatten_config(group["config"])
+            row = {"score": best, "timesteps": flat.get("timesteps")}
+            for field in fields:
+                row[field] = flat.get(field)
             for name in names:
                 found = group["runtimes"].get(name) or {}
                 row[f"{name}_id"] = found.get("id")
@@ -347,7 +352,9 @@ class Results:
         # None would show it as None, and an id column holding None is a float.
         date_columns = [c for c in columns if c.endswith("_date")]
         frame[date_columns] = frame[date_columns].astype(object).where(frame[date_columns].notna(), float("nan"))
-        return _RuntimeFrame(frame)
+        frame = _RuntimeFrame(frame)
+        frame._reference = self._reference
+        return frame
 
     def by(self, field, latest=False):
         """Scores grouped by one column, usually a config setting.
@@ -773,6 +780,8 @@ class _TrimmedFrame(pd.DataFrame):
 class _RuntimeFrame(_TrimmedFrame):
     """The ``runtimes`` table: per-runtime scores in light red, the overall score in light orange."""
 
+    _metadata = ["_reference"]
+
     @property
     def _constructor(self):
         return _RuntimeFrame
@@ -788,6 +797,16 @@ class _RuntimeFrame(_TrimmedFrame):
     def styled(self):
         plain = pd.DataFrame(self)
         styler = _frame_look(plain.style.format(_formats(plain.columns, _dash, _dash_steps)))
+        ref = getattr(self, "_reference", None) or {}
+        if ref:
+            styles = pd.DataFrame("", index=plain.index, columns=plain.columns)
+            for position, name in enumerate(plain.columns):
+                if name not in ref or name in ("score", "timesteps"):
+                    continue
+                for row, value in enumerate(plain.iloc[:, position]):
+                    if not _same(value, ref[name]):
+                        styles.iat[row, position] = _SHADE
+            styler = styler.apply(lambda _: styles, axis=None)
         per_runtime = [c for c in self.columns if c.endswith("_score")]
         if per_runtime:
             styler = styler.set_properties(
