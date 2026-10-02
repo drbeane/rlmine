@@ -686,6 +686,21 @@ def _load_config(config):
     return copy.deepcopy(config)
 
 
+def _frame_look(styler):
+    """Make a Styler look like a plain DataFrame table, which Colab and Jupyter style well.
+
+    A bare Styler table lacks the ``dataframe`` class their CSS targets, so cells
+    sit left-aligned with no padding and the headers run together.
+    """
+    return styler.set_table_attributes('class="dataframe"').set_table_styles(
+        [
+            {"selector": "th, td", "props": [("text-align", "right"), ("padding", "0.5em 0.9em")]},
+            {"selector": "th", "props": [("font-weight", "bold")]},
+        ],
+        overwrite=False,
+    )
+
+
 def _tint_score(styler):
     """Give the score column a light red background."""
     if "score" in styler.data.columns:
@@ -736,7 +751,7 @@ class _TrimmedFrame(pd.DataFrame):
     def styled(self):
         """The table as a pandas Styler, with trailing zeros trimmed."""
         plain = pd.DataFrame(self)
-        return _tint_score(plain.style.format(_formats(plain.columns)))
+        return _tint_score(_frame_look(plain.style.format(_formats(plain.columns))))
 
     def _repr_html_(self):
         try:
@@ -769,7 +784,7 @@ class _RuntimeFrame(_TrimmedFrame):
 
     def styled(self):
         plain = pd.DataFrame(self)
-        styler = plain.style.format(_formats(plain.columns, _dash, _dash_steps))
+        styler = _frame_look(plain.style.format(_formats(plain.columns, _dash, _dash_steps)))
         per_runtime = [c for c in self.columns if c.endswith("_score")]
         if per_runtime:
             styler = styler.set_properties(
@@ -830,7 +845,7 @@ class _ShadedFrame(_TrimmedFrame):
         """The table as a pandas Styler, with differing settings shaded."""
         plain = pd.DataFrame(self)
         styler = plain.style.apply(lambda _: self._shade_styles(), axis=None).format(_formats(plain.columns))
-        return _tint_score(styler)
+        return _tint_score(_frame_look(styler))
 
     def _repr_html_(self):
         try:
