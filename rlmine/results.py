@@ -20,6 +20,7 @@ Pass ``config`` (a dict, or the path of a JSON file) to shade, in ``best`` and
 from __future__ import annotations
 
 import copy
+import functools
 import json
 import math
 import sys
@@ -88,6 +89,27 @@ _PARAMS = ("varying", "all", "none")
 _SHADE = "background-color: #ffe08a; color: #000000"
 
 
+def _reloads(method):
+    """Reread the file before a public method runs, so it never reports a stale view.
+
+    A filtered ``Results`` holds a subset of the file and is left as it is. A
+    method called from another method does not reread again.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        if self._filtered or self._reading:
+            return method(self, *args, **kwargs)
+        self._reading = True
+        try:
+            self._reload()
+            return method(self, *args, **kwargs)
+        finally:
+            self._reading = False
+
+    return wrapper
+
+
 class Results:
     """A results file opened for analysis.
 
@@ -124,7 +146,14 @@ class Results:
         self._configs = None
         self._keep_status = False
         self._filtered = False
+        self._reading = False
 
+    def _reload(self):
+        self.document = _load_document(self.path)
+        self._history = None
+        self._configs = None
+
+    @_reloads
     def __repr__(self):
         info = self.summary()
         best = "none" if info["best"] is None else info["best"]
@@ -134,9 +163,11 @@ class Results:
             f"runs={int(info['runs'])}, best={best}, worst={worst})"
         )
 
+    @_reloads
     def __len__(self):
         return len(self._all_runs())
 
+    @_reloads
     def summary(self):
         """How much is in the file, as one table.
 
@@ -173,6 +204,7 @@ class Results:
             name=self.path.name,
         )
 
+    @_reloads
     def delete_runs(self, *run_ids):
         """Delete runs by ``idx``: ``results.delete_runs(4, 7, 9)`` or a list.
 
@@ -181,11 +213,13 @@ class Results:
         """
         self._delete("delete_runs", _flatten_ids(run_ids))
 
+    @_reloads
     def delete_configs(self, *config_ids):
         """Delete whole configs, with every run, by ``config_id``.
         """
         self._delete("delete_configs", _flatten_ids(config_ids))
 
+    @_reloads
     def delete_duplicates(self, dry_run=False):
         """Delete runs that match a more recent run of the same config.
 
@@ -232,6 +266,7 @@ class Results:
         frame = _latest_runs(self._history) if latest else self._history
         return frame.copy()
 
+    @_reloads
     def table(self, n=None, params="varying", latest=False):
         """Runs sorted by score, with the config fields that are worth showing.
 
@@ -262,6 +297,7 @@ class Results:
             view = _TrimmedFrame(view)
         return view
 
+    @_reloads
     def best(self, k=10, params="varying", latest=True):
         """The ``k`` highest-scoring runs.
 
@@ -275,6 +311,7 @@ class Results:
         lead.insert(lead.index("score"), "date")
         return self._table(k, params, latest, lead)
 
+    @_reloads
     def configs(self, params="varying"):
         """One row per config, ranked by its best score.
 
@@ -291,6 +328,7 @@ class Results:
         columns += [c for c in fields if c in frame.columns and c not in columns]
         return frame[columns].copy()
 
+    @_reloads
     def runtimes(self, k=10):
         """The ``k`` best setups, with each runtime they were checked on.
 
@@ -356,6 +394,7 @@ class Results:
         frame._reference = self._reference
         return frame
 
+    @_reloads
     def by(self, field, latest=False):
         """Scores grouped by one column, usually a config setting.
 
@@ -388,6 +427,7 @@ class Results:
             ["best", "mean"], ascending=False, na_position="last", kind="mergesort"
         ).reset_index(drop=True)
 
+    @_reloads
     def drift(self):
         """Each later score of a config against the one recorded before it.
 
@@ -427,6 +467,7 @@ class Results:
             return pd.DataFrame(columns=_DRIFT_COLUMNS)
         return pd.DataFrame(rows, columns=_DRIFT_COLUMNS)
 
+    @_reloads
     def runs(self, config_id):
         """Every recorded run of one config, in the order it was recorded.
 
@@ -441,6 +482,7 @@ class Results:
         columns = [name for name in _RUN_VIEW if name in rows.columns]
         return _TrimmedFrame(rows[columns].reset_index(drop=True))
 
+    @_reloads
     def get_config(self, config_id, diff=False):
         """The config stored under ``config_id``, as a nested dict.
 
@@ -466,6 +508,7 @@ class Results:
             shown.setdefault("training", {})["timesteps"] = training["timesteps"]
         return shown
 
+    @_reloads
     def compare(self, *config_ids):
         """The named configs side by side, keeping fields that differ.
 
@@ -486,6 +529,7 @@ class Results:
                 keep.append(column)
         return view[keep].reset_index(drop=True)
 
+    @_reloads
     def filter(self, *conditions):
         """The runs that match every condition, as another ``Results``.
 
@@ -541,7 +585,7 @@ class Results:
             if isinstance(condition, Expr):
                 for ref in condition.refs():
                     self._check_ref(ref, marked)
-        caller = sys._getframe(1)
+        caller = sys._getframe(2)  # past the _reloads wrapper
         scope = {**caller.f_globals, **caller.f_locals}
         keep = _filter_mask(conditions, marked, scope)
         document = {}
