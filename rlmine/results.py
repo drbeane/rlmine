@@ -296,10 +296,10 @@ class Results:
 
         Configs that differ only in ``runtime`` are one setup. Setups are
         ranked by the best latest score among their runtimes. Each row shows
-        ``score`` (the best latest score among the runtimes), ``timesteps``, and
-        the same settings ``best`` shows (shaded the same way when a reference
-        ``config`` is given), then for each runtime the latest score, the date of that run, its
-        ``minutes``, and the config id.
+        ``score`` (the best latest score among the runtimes), then for each
+        runtime the latest score, the date of that run, its ``minutes``, and
+        the config id, then ``timesteps`` and the same settings ``best`` shows
+        (shaded the same way when a reference ``config`` is given).
         A runtime that was never checked is blank.
         """
         groups = {}
@@ -327,9 +327,9 @@ class Results:
 
         names = sorted({name for g in groups.values() for name in g["runtimes"]})
         fields = [c for c in self._param_fields("varying") if c not in ("runtime", "timesteps")]
-        columns = ["score", "timesteps"] + fields + [
+        columns = ["score"] + [
             f"{name}_{part}" for name in names for part in ("score", "date", "minutes", "id")
-        ]
+        ] + ["timesteps"] + fields
         ranked = []
         for group in groups.values():
             scores = [r["score"] for r in group["runtimes"].values() if r["score"] is not None]
