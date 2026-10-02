@@ -177,6 +177,10 @@ class Space:
         return param.clean(param.default)
 
     def apply_constraints(self, values):
+        values = dict(values)
+        initial, final = values.get("initial_lr"), values.get("final_lr")
+        if _present(initial) and _present(final) and final > initial:
+            values["final_lr"] = initial
         if self.constraints is None:
             return values
         corrected = self.constraints(dict(values))
