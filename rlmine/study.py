@@ -107,6 +107,13 @@ class Study:
         different config. Overrides apply on top, exactly as they do to the
         study's own config.
 
+        ``config_id`` can be a list of ids. Each is run in turn (``n`` trials
+        apiece) from its stored config. Each id's own ``runtime`` is dropped,
+        so the ids may come from different runtimes; each trial records the
+        machine it runs on.
+
+            study.run(config_id=[927170, 415882])
+
         ``config_id`` can also be a :class:`~rlmine.results.Results`, usually
         filtered. Each trial draws its own parent from the configs in it and
         starts from that config, so ``n=20`` mutates up to 20 different
@@ -161,27 +168,35 @@ class Study:
         pool = None
         if isinstance(config_id, Results):
             pool = _ParentPool(config_id, parent_sampling)
-            base = source = None
+            bases = [(None, None)]
+        elif isinstance(config_id, (list, tuple)):
+            if not config_id:
+                raise ValueError("config_id list is empty")
+            bases = [
+                (self._stored_config(cid), format_config_id(cid)) for cid in config_id
+            ]
+        elif config_id is None:
+            bases = [(self.config, None)]
         else:
-            base = self.config if config_id is None else self._stored_config(config_id)
-            source = None if config_id is None else format_config_id(config_id)
+            bases = [(self._stored_config(config_id), format_config_id(config_id))]
         records = []
         logs = []
-        for i in range(count):
-            if pool is not None:
-                pid = pool.draw(rng)
-                base, source = pool.config(pid), pid
-            config, score_fn, digits, info, runtime, drawn = self._prepare(
-                base, overrides, rng
-            )
-            if self.verbose and i:
-                print()
-            record, text = self._execute(
-                config, score_fn, digits, info, runtime, drawn, source,
-                prune=prune, prune_minutes=prune_minutes,
-            )
-            records.append(record)
-            logs.append(text)
+        for base, source in bases:
+            for _ in range(count):
+                if pool is not None:
+                    pid = pool.draw(rng)
+                    base, source = pool.config(pid), pid
+                config, score_fn, digits, info, runtime, drawn = self._prepare(
+                    base, overrides, rng
+                )
+                if self.verbose and records:
+                    print()
+                record, text = self._execute(
+                    config, score_fn, digits, info, runtime, drawn, source,
+                    prune=prune, prune_minutes=prune_minutes,
+                )
+                records.append(record)
+                logs.append(text)
         return _RunFrame(records, log="\n\n".join(logs), echoed=self.verbose)
 
     def rerun(self, config_id=None, top=None):
