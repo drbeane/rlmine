@@ -1,13 +1,19 @@
-"""Small shared helpers: rounding, run ids, environment metadata, display."""
+"""Small shared helpers: rounding, environment metadata, display."""
 
 from __future__ import annotations
 
 import os
-import random
 import sys
 import warnings
 from datetime import datetime
 from math import floor, log10
+
+
+class Pruned(Exception):
+    """Raised by a trial to abandon a run that is not performing well enough.
+
+    ``Study`` records nothing for a pruned run and moves on to the next one.
+    """
 
 
 def round_sig(x, n):
@@ -16,18 +22,6 @@ def round_sig(x, n):
         return x
     k = -floor(log10(abs(x))) + n - 1
     return round(x, k)
-
-
-def new_run_id(prefix=None):
-    """Time-ordered, collision-resistant id, e.g. '20260825-171530-a3f2'.
-
-    Sortable by creation time so history stays readable, but unique enough that
-    two Colab sessions mining the same study will not clash.
-    """
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    suffix = f"{random.getrandbits(16):04x}"
-    base = f"{stamp}-{suffix}"
-    return f"{prefix}-{base}" if prefix else base
 
 
 def _version(module_name):
@@ -74,7 +68,7 @@ def today():
 
 
 def now_iso():
-    return datetime.now().isoformat(timespec="seconds")
+    return datetime.now().isoformat(timespec="microseconds")
 
 
 def _quiet_third_party_warnings():

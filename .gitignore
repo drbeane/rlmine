@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Local mining output
+*.jsonl
+results/*.json
+evaluation/
+gifs/
+results/
+
+# Not part of the package
+rltools/
+temp/
+examples/
+tests/

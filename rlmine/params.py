@@ -1,16 +1,20 @@
 """Declarative parameter definitions.
 
-A parameter knows four things: its type, how to produce a fresh value, how to
-perturb an inherited value, and how to clean a value (clip, round, coerce).
-Keeping all four in one object is what lets ``Study`` treat every search the
-same way regardless of environment or algorithm.
+Each parameter declares a default (used when not sampling or mutating) and
+hard bounds (always applied). Sample range and mutation live next to those
+so a run can pick a behaviour per variable: a given value, the default,
+a draw from the sample range, or a mutation of a parent.
 
     from rlmine import params as P
 
     space = dict(
-        timesteps     = P.Int(1_000_000, mutate='fixed'),
-        learning_rate = P.Float(7e-4, sig=2, bounds=(0, None), mutate=P.scale(0.2)),
-        gamma         = P.Float(0.99, digits=3, bounds=(0, 1)),
+        timesteps     = P.Int(1_000_000, bounds=(1, None)),
+        learning_rate = P.Float(7e-4, sig=2, bounds=(1e-6, 1),
+                                sample=P.loguniform(1e-5, 1e-2),
+                                mutate=P.scale(0.2)),
+        gamma         = P.Float(0.99, digits=3, bounds=(0, 1),
+                                sample=(0.9, 0.999),
+                                mutate=P.scale(0.02)),
         net_arch      = P.Choice([[128, 128], [256, 256]], default=[256, 256]),
         use_sde       = P.Bool(False),
     )
@@ -31,6 +35,11 @@ __all__ = [
     "Float",
     "Bool",
     "Choice",
+    "Action",
+    "DEFAULT",
+    "SAMPLE",
+    "MUTATE",
+    "PARENT",
     "scale",
     "times",
     "shift",
@@ -42,6 +51,61 @@ __all__ = [
     "loguniform",
     "choice",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Per-run actions: how this call should obtain a value for one parameter
+# ---------------------------------------------------------------------------
+
+
+class Action:
+    """Instruction used as a parameter value in ``study.run``.
+
+    Bare sentinels use the sample range or mutation declared on the Param::
+
+        study.run(n=10, learning_rate=P.SAMPLE, gamma=P.DEFAULT)
+
+    Calling a sentinel states a range or transformation for this run only::
+
+        study.run(n=10, learning_rate=P.SAMPLE(P.loguniform(1e-5, 1e-2)))
+        study.run(n=10, parent=184203, gamma=P.MUTATE(P.scale(0.05)))
+    """
+
+    def __init__(self, kind, spec=None):
+        self.kind = kind
+        self.spec = spec
+
+    def __call__(self, spec):
+        return Action(self.kind, spec)
+
+    def __repr__(self):
+        label = self.kind.upper()
+        return label if self.spec is None else f"{label}({self.spec!r})"
+
+    def __eq__(self, other):
+        return (
+            isinstance(other, Action)
+            and self.kind == other.kind
+            and self.spec == other.spec
+        )
+
+
+DEFAULT = Action("default")
+SAMPLE = Action("sample")
+MUTATE = Action("mutate")
+PARENT = Action("parent")
+
+
+def _is_action(value):
+    """True for an Action, including one from a previous import of rlmine."""
+    if isinstance(value, Action):
+        return True
+    return type(value).__name__ == "Action" and getattr(value, "kind", None) in (
+        "default",
+        "sample",
+        "mutate",
+        "parent",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -257,9 +321,23 @@ def choice(options):
     return ChoiceSampler(options)
 
 
-def _as_sampler(spec):
+def _is_number(value):
+    return isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(
+        value, bool
+    )
+
+
+def _as_sampler(spec, numeric=False):
     if spec is None or isinstance(spec, Sampler):
         return spec
+    if (
+        numeric
+        and isinstance(spec, (list, tuple))
+        and len(spec) == 2
+        and _is_number(spec[0])
+        and _is_number(spec[1])
+    ):
+        return Uniform(spec[0], spec[1], log=False)
     if isinstance(spec, (list, tuple)):
         return ChoiceSampler(spec)
     if callable(spec):
@@ -279,7 +357,7 @@ class Param:
         self.default = default
         self.bounds = bounds
         self.mutation = _as_mutation(mutate)
-        self.sampler = _as_sampler(sample)
+        self.sampler = _as_sampler(sample, numeric=isinstance(self, (Int, Float)))
         self.doc = doc
 
     # -- subclass hooks ----------------------------------------------------
@@ -321,12 +399,27 @@ class Param:
         return self.sampler(self, rng)
 
     def draw(self, rng):
-        """A fresh value, used when there is no parent to inherit from."""
+        """A fresh value from the sampler, or the default if none is declared."""
         return self.clean(self.draw_raw(rng))
 
-    def perturb(self, value, rng):
+    def sample_value(self, rng, sampler=None, name=None):
+        """Draw from a stated range. Errors if this parameter has none."""
+        numeric = isinstance(self, (Int, Float))
+        use = self.sampler if sampler is None else _as_sampler(sampler, numeric=numeric)
+        if use is None:
+            label = repr(name) if name is not None else type(self).__name__
+            raise ValueError(
+                f"Cannot sample {label}: no sample range declared. "
+                "Add sample=(low, high) or sample=P.loguniform(...) to the Param."
+            )
+        return self.clean(use(self, rng))
+
+    def perturb(self, value, rng, mutation=None):
         """A mutated value derived from ``value``."""
-        mutation = self.mutation or self.default_mutation()
+        if mutation is None:
+            mutation = self.mutation or self.default_mutation()
+        else:
+            mutation = _as_mutation(mutation)
         return self.clean(mutation(value, self, rng))
 
     def __repr__(self):
@@ -398,6 +491,10 @@ class Bool(Param):
     """A boolean parameter. Defaults to a coin flip when mutated."""
 
     TRUTHY = {"true", "t", "yes", "y", "1"}
+
+    def __init__(self, default, **kwargs):
+        kwargs.setdefault("sample", [False, True])
+        super().__init__(default, **kwargs)
 
     def coerce(self, value):
         return bool(value)

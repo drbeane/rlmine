@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .params import Param
+from .params import Param, _is_action
 
 __all__ = ["Space"]
 
@@ -22,16 +22,17 @@ class Space:
     """
 
     def __init__(self, params, constraints=None):
-        if isinstance(params, Space):
+        if _is_space(params):
             constraints = constraints or params.constraints
             params = params.params
 
-        bad = {k: v for k, v in params.items() if not isinstance(v, Param)}
+        bad = {k: v for k, v in params.items() if not _is_param(v)}
         if bad:
             raise TypeError(
                 "Space values must be Param objects (P.Int, P.Float, P.Bool, "
                 f"P.Choice). Got plain values for: {sorted(bad)}. "
-                "Use P.Int(4) rather than 4."
+                "Use P.Int(4) rather than 4. If you just reloaded rlmine, "
+                "re-run the cell that defines space so it builds fresh Params."
             )
 
         self.params = dict(params)
@@ -76,20 +77,36 @@ class Space:
     def _check_names(self, names, label):
         unknown = [n for n in names if n not in self.params]
         if unknown:
+            hint = ""
+            reserved = [n for n in unknown if n in ("sample", "mutate", "parent")]
+            if reserved:
+                hint = (
+                    f" {reserved} belong on Study.run / Study.mine "
+                    "(sample=['gamma'], not as a space parameter)."
+                )
             raise KeyError(
-                f"Unknown {label}: {unknown}. Space defines: {self.names}"
+                f"Unknown {label}: {unknown}. Space defines: {self.names}.{hint}"
             )
 
     def _resolve_mutate(self, mutate):
-        if mutate is None:
-            return []
-        if isinstance(mutate, str):
-            if mutate == "all":
-                return self.names
-            mutate = [mutate]
-        mutate = list(mutate)
-        self._check_names(mutate, "parameter(s) in mutate")
-        return mutate
+        return list(self._as_spec_map(mutate, "parameter(s) in mutate"))
+
+    def _as_spec_map(self, spec, label):
+        """Normalise ``sample=`` / ``mutate=`` to ``{name: extra or None}``."""
+        if spec is None or spec is False:
+            return {}
+        if isinstance(spec, str):
+            if spec == "all":
+                return {name: None for name in self.names}
+            spec = [spec]
+        if isinstance(spec, dict):
+            self._check_names(spec, label)
+            return {
+                name: (None if extra is True else extra) for name, extra in spec.items()
+            }
+        spec = list(spec)
+        self._check_names(spec, label)
+        return {name: None for name in spec}
 
     def defaults(self):
         return {name: p.clean(p.default) for name, p in self.params.items()}
@@ -99,36 +116,65 @@ class Space:
         rng = _as_rng(rng)
         return self.apply_constraints({n: p.draw(rng) for n, p in self.params.items()})
 
-    def derive(self, parent=None, mutate=(), overrides=None, rng=None, fresh=False):
-        """Build a parameter set.
+    def derive(self, parent=None, mutate=(), sample=(), overrides=None, rng=None, fresh=False):
+        """Build a parameter set from per-parameter behaviours.
 
-        Precedence, highest first: explicit ``overrides``, then a mutation of
-        the ``parent`` value for parameters named in ``mutate``, then the
-        inherited ``parent`` value, then a fresh draw (if ``fresh``), then the
-        declared default.
+        For each parameter the first matching rule wins:
+
+        1. A given value in ``overrides``
+        2. ``P.SAMPLE`` / a name in ``sample`` — draw from the stated range
+        3. ``P.MUTATE`` / a name in ``mutate`` — perturb the parent value
+        4. ``P.PARENT`` — inherit the parent value
+        5. ``P.DEFAULT`` — the declared default
+        6. The parent value, if a parent was supplied
+        7. The declared default
+
+        ``fresh`` is accepted for older callers; it draws every parameter
+        that does not already have a more specific instruction.
         """
         rng = _as_rng(rng)
         overrides = dict(overrides or {})
+        sample, mutate, overrides = _take_run_controls(overrides, sample, mutate)
         self._check_names(overrides, "parameter override(s)")
-        mutate = self._resolve_mutate(mutate)
+        sample_map = self._as_spec_map(sample, "parameter(s) in sample")
+        mutate_map = self._as_spec_map(mutate, "parameter(s) in mutate")
 
         values = {}
         for name, param in self.params.items():
-            if name in overrides:
-                values[name] = param.clean(overrides[name])
-            elif name in mutate:
-                if parent is not None and name in parent and _present(parent[name]):
-                    values[name] = param.perturb(parent[name], rng)
-                else:
-                    values[name] = param.draw(rng)
-            elif parent is not None and name in parent and _present(parent[name]):
-                values[name] = param.clean(parent[name])
-            elif fresh:
-                values[name] = param.draw(rng)
-            else:
-                values[name] = param.clean(param.default)
+            values[name] = self._value_for(
+                name,
+                param,
+                parent=parent,
+                overrides=overrides,
+                sample_map=sample_map,
+                mutate_map=mutate_map,
+                fresh=fresh,
+                rng=rng,
+            )
 
         return self.apply_constraints(values)
+
+    def _value_for(self, name, param, parent, overrides, sample_map, mutate_map, fresh, rng):
+        kind, spec = _behaviour(name, overrides, sample_map, mutate_map, parent, fresh)
+        if kind == "value":
+            return param.clean(spec)
+        if kind == "sample":
+            return param.sample_value(rng, sampler=spec, name=name)
+        if kind == "draw":
+            return param.draw(rng)
+        if kind == "mutate":
+            if parent is not None and name in parent and _present(parent[name]):
+                return param.perturb(parent[name], rng, mutation=spec)
+            if param.sampler is not None:
+                return param.sample_value(rng, name=name)
+            return param.clean(param.default)
+        if kind == "parent":
+            if parent is None or name not in parent or not _present(parent[name]):
+                raise ValueError(
+                    f"Cannot inherit {name!r} from a parent: no parent value is available."
+                )
+            return param.clean(parent[name])
+        return param.clean(param.default)
 
     def apply_constraints(self, values):
         if self.constraints is None:
@@ -164,6 +210,67 @@ class Space:
             else:
                 values[name] = param.clean(param.default)
         return values
+
+
+def _is_param(value):
+    """True for a Param, including one built by a previous import of rlmine.
+
+    After ``importlib.reload`` (or deleting ``sys.modules['rlmine']``), a
+    space dict still holds Int/Float/Bool/Choice instances from the old
+    module. ``isinstance(value, Param)`` is then False even though the
+    objects are usable.
+    """
+    if isinstance(value, Param):
+        return True
+    if type(value).__name__ not in ("Int", "Float", "Bool", "Choice"):
+        return False
+    return callable(getattr(value, "clean", None)) and hasattr(value, "default")
+
+
+def _is_space(obj):
+    """True for a Space, including one built by a previous import of rlmine."""
+    if isinstance(obj, Space):
+        return True
+    return callable(getattr(obj, "derive", None)) and hasattr(obj, "params")
+
+
+def _take_run_controls(overrides, sample, mutate):
+    """Pull ``sample=`` / ``mutate=`` out of overrides if they leaked in.
+
+    Older ``Study.run(n=1, **overrides)`` treated those names as parameters.
+    They are run controls, not space parameters.
+    """
+    if "sample" in overrides:
+        leaked = overrides.pop("sample")
+        if sample is None or sample == ():
+            sample = leaked
+    if "mutate" in overrides:
+        leaked = overrides.pop("mutate")
+        if mutate is None or mutate == ():
+            mutate = leaked
+    if "parent" in overrides:
+        raise KeyError(
+            "parent= is a Study.run argument, not a space parameter. "
+            "Pass parent=184203 (a config id) or a row to run/mine."
+        )
+    return sample, mutate, overrides
+
+
+def _behaviour(name, overrides, sample_map, mutate_map, parent, fresh):
+    if name in overrides:
+        value = overrides[name]
+        if _is_action(value):
+            return value.kind, value.spec
+        return "value", value
+    if name in sample_map:
+        return "sample", sample_map[name]
+    if name in mutate_map:
+        return "mutate", mutate_map[name]
+    if fresh:
+        return "draw", None
+    if parent is not None and name in parent and _present(parent[name]):
+        return "parent", None
+    return "default", None
 
 
 def _present(value):
